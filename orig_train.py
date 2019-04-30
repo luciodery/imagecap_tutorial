@@ -1,5 +1,3 @@
-# TODO [ldery] - cite the repo this was modified from
-
 import argparse
 import torch
 import torch.nn as nn
@@ -8,13 +6,10 @@ import os
 import pickle
 from data_loader import get_loader
 from build_vocab import Vocabulary
-from model import EncoderCNN, DecoderRNN
+from orig_model import EncoderCNN, DecoderRNN
 from torch.nn.utils.rnn import pack_padded_sequence
+from torchvision import transforms
 
-##########################  YOUR CODE BEGINS HERE ##############################
-# TODO [YOU] - add any imports required.
-
-##########################  YOUR CODE ENDS HERE ################################
 
 # Device configuration
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -24,33 +19,31 @@ def main(args):
     if not os.path.exists(args.model_path):
         os.makedirs(args.model_path)
 
-
+    # Image preprocessing, normalization for the pretrained resnet
+    transform = transforms.Compose([
+        transforms.RandomCrop(args.crop_size),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406),
+                             (0.229, 0.224, 0.225))])
 
     # Load vocabulary wrapper
     with open(args.vocab_path, 'rb') as f:
         vocab = pickle.load(f)
 
     # Build data loader
-    #################### YOUR CODE BEGINS HERE ##################################
-    # TODO [YOU] - Peform image preprocessing and data augmentation by defining transform.
-    transform = None
-
     data_loader = get_loader(args.image_dir, args.caption_path, vocab,
                              transform, args.batch_size,
                              shuffle=True, num_workers=args.num_workers)
-
-    #################### YOUR CODE ENDS HERE ####################################
 
     # Build the models
     encoder = EncoderCNN(args.embed_size).to(device)
     decoder = DecoderRNN(args.embed_size, args.hidden_size, len(vocab), args.num_layers).to(device)
 
-
-    # Loss, optimizer and training pipeline
-    #################### YOUR CODE BEGINS HERE ##################################
-    criterion = None  #  Define the appropriate loss function
-    params = None     #  Get the full list of parameters to be optimized
-    optimizer = None  #  Define the optimizer. Make sure to specify the parameters to be optimized over
+    # Loss and optimizer
+    criterion = nn.CrossEntropyLoss()
+    params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
+    optimizer = torch.optim.Adam(params, lr=args.learning_rate)
 
     # Train the models
     total_step = len(data_loader)
@@ -63,18 +56,13 @@ def main(args):
             targets = pack_padded_sequence(captions, lengths, batch_first=True)[0]
 
             # Forward, backward and optimize
-            features = None # Get the features from the encoder
-            outputs = None  # Pass these features into the decoder, along with any other required arguments
-
-            loss = None  # Compute the loss from the output and targets
-
-            # TODO [YOU]
-            # 1. zero out the gradients for encoder, decoder
-            # 2. perform backward pass
-            # 3. perform a gradient step
-
-
-    #################### YOUR CODE ENDS HERE ####################################
+            features = encoder(images)
+            outputs = decoder(features, captions, lengths)
+            loss = criterion(outputs, targets)
+            decoder.zero_grad()
+            encoder.zero_grad()
+            loss.backward()
+            optimizer.step()
 
             # Print log info
             if i % args.log_step == 0:
